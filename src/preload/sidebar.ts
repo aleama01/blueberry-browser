@@ -1,6 +1,8 @@
 import { contextBridge } from "electron";
 import { electronAPI } from "@electron-toolkit/preload";
 
+export type ChatMode = 'chat' | 'agent'
+
 interface ChatRequest {
   message: string;
   context: {
@@ -9,6 +11,7 @@ interface ChatRequest {
     text: string | null;
   };
   messageId: string;
+  mode?: ChatMode;
 }
 
 interface ChatResponse {

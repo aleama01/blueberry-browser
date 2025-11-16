@@ -1,5 +1,7 @@
 import { ElectronAPI } from "@electron-toolkit/preload";
 
+export type ChatMode = 'chat' | 'agent'
+
 interface ChatRequest {
   message: string;
   context: {
@@ -8,6 +10,7 @@ interface ChatRequest {
     text: string | null;
   };
   messageId: string;
+  mode?: ChatMode;
 }
 
 interface ChatResponse {
@@ -26,8 +29,12 @@ interface TabInfo {
 interface SidebarAPI {
   // Chat functionality
   sendChatMessage: (request: ChatRequest) => Promise<void>;
+  clearChat: () => Promise<void>;
+  getMessages: () => Promise<any[]>;
   onChatResponse: (callback: (data: ChatResponse) => void) => void;
+  onMessagesUpdated: (callback: (messages: any[]) => void) => void;
   removeChatResponseListener: () => void;
+  removeMessagesUpdatedListener: () => void;
 
   // Page content access
   getPageContent: () => Promise<string | null>;

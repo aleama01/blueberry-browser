@@ -9,9 +9,12 @@ import type { Window } from "./Window";
 // Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
 
+export type ChatMode = 'chat' | 'agent';
+
 interface ChatRequest {
   message: string;
   messageId: string;
+  mode?: ChatMode;
 }
 
 interface StreamChunk {
@@ -174,7 +177,7 @@ export class LLMClient {
     this.webContents.send("chat-messages-updated", this.messages);
   }
 
-  private async prepareMessagesWithContext(_request: ChatRequest): Promise<CoreMessage[]> {
+  private async prepareMessagesWithContext(request: ChatRequest): Promise<CoreMessage[]> {
     // Get page context from active tab
     let pageUrl: string | null = null;
     let pageText: string | null = null;
@@ -191,17 +194,24 @@ export class LLMClient {
       }
     }
 
-    // Build system message
+    // Build system message with mode-specific prompt
     const systemMessage: CoreMessage = {
       role: "system",
-      content: this.buildSystemPrompt(pageUrl, pageText),
+      content: this.buildSystemPrompt(pageUrl, pageText, request.mode || 'chat'),
     };
 
     // Include all messages in history (system + conversation)
     return [systemMessage, ...this.messages];
   }
 
-  private buildSystemPrompt(url: string | null, pageText: string | null): string {
+  private buildSystemPrompt(url: string | null, pageText: string | null, mode: ChatMode): string {
+    if (mode === 'agent') {
+      return this.buildAgentSystemPrompt(url, pageText);
+    }
+    return this.buildChatSystemPrompt(url, pageText);
+  }
+
+  private buildChatSystemPrompt(url: string | null, pageText: string | null): string {
     const parts: string[] = [
       "You are a helpful AI assistant integrated into a web browser.",
       "You can analyze and discuss web pages with the user.",
@@ -220,6 +230,47 @@ export class LLMClient {
     parts.push(
       "\nPlease provide helpful, accurate, and contextual responses about the current webpage.",
       "If the user asks about specific content, refer to the page content and/or screenshot provided."
+    );
+
+    return parts.join("\n");
+  }
+
+  private buildAgentSystemPrompt(url: string | null, pageText: string | null): string {
+    const parts: string[] = [
+      "You are a code generation assistant integrated into a web browser.",
+      "Your task is to generate JavaScript code that can be executed on the current webpage.",
+      "The user will describe what they want to accomplish, and you should generate clean, executable JavaScript code.",
+      "",
+      "IMPORTANT INSTRUCTIONS:",
+      "- Generate ONLY valid JavaScript code that can run in a browser context",
+      "- Use modern JavaScript (ES6+) features",
+      "- For DOM manipulation, use standard APIs like querySelector, querySelectorAll, etc.",
+      "- For form filling, locate elements and set their values",
+      "- For styling changes, modify element.style or add/remove classes",
+      "- Include error handling for robustness",
+      "- Add brief comments to explain complex logic",
+      "- Return any extracted data as a JavaScript object or array",
+      "",
+      "AVAILABLE CONTEXT:",
+    ];
+
+    if (url) {
+      parts.push(`- Current page URL: ${url}`);
+    }
+
+    if (pageText) {
+      const truncatedText = this.truncateText(pageText, MAX_CONTEXT_LENGTH);
+      parts.push(`- Page content (text):\n${truncatedText}`);
+    }
+
+    parts.push(
+      "",
+      "Your response should contain:",
+      "1. A brief explanation of what the code does (1-2 sentences)",
+      "2. The complete JavaScript code in a ```javascript code block```",
+      "3. Any important notes or warnings about running the code",
+      "",
+      "Focus on practical, safe, and efficient code that accomplishes the user's goal."
     );
 
     return parts.join("\n");
