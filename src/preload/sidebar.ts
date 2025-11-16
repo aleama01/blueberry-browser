@@ -55,6 +55,59 @@ const sidebarAPI = {
 
   // Tab information
   getActiveTabInfo: () => electronAPI.ipcRenderer.invoke("get-active-tab-info"),
+
+  // Script management
+  addScript: (code: string, description?: string) =>
+    electronAPI.ipcRenderer.invoke("add-script", code, description),
+
+  getScript: (scriptId: string) =>
+    electronAPI.ipcRenderer.invoke("get-script", scriptId),
+
+  getAllScripts: () =>
+    electronAPI.ipcRenderer.invoke("get-all-scripts"),
+
+  approveScript: (scriptId: string) =>
+    electronAPI.ipcRenderer.invoke("approve-script", scriptId),
+
+  executeScript: (request: any) =>
+    electronAPI.ipcRenderer.invoke("execute-script", request),
+
+  deleteScript: (scriptId: string) =>
+    electronAPI.ipcRenderer.invoke("delete-script", scriptId),
+
+  clearAllScripts: () =>
+    electronAPI.ipcRenderer.invoke("clear-all-scripts"),
+
+  extractCode: (text: string) =>
+    electronAPI.ipcRenderer.invoke("extract-code", text),
+
+  autoExtractScript: (response: string, description?: string) =>
+    electronAPI.ipcRenderer.invoke("auto-extract-script", response, description),
+
+  // Script event listeners
+  onScriptUpdated: (callback: (script: any) => void) => {
+    electronAPI.ipcRenderer.on("script-updated", (_, script) => callback(script));
+  },
+
+  onScriptDeleted: (callback: (data: { scriptId: string }) => void) => {
+    electronAPI.ipcRenderer.on("script-deleted", (_, data) => callback(data));
+  },
+
+  onScriptsCleared: (callback: () => void) => {
+    electronAPI.ipcRenderer.on("scripts-cleared", () => callback());
+  },
+
+  removeScriptUpdateListener: () => {
+    electronAPI.ipcRenderer.removeAllListeners("script-updated");
+  },
+
+  removeScriptDeleteListener: () => {
+    electronAPI.ipcRenderer.removeAllListeners("script-deleted");
+  },
+
+  removeScriptsClearedListener: () => {
+    electronAPI.ipcRenderer.removeAllListeners("scripts-cleared");
+  },
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

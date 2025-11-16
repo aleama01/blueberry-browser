@@ -28,8 +28,9 @@ export class Window {
     this._topBar = new TopBar(this._baseWindow);
     this._sideBar = new SideBar(this._baseWindow);
 
-    // Set the window reference on the LLM client to avoid circular dependency
+    // Set the window reference on the LLM client and Script Manager to avoid circular dependency
     this._sideBar.client.setWindow(this);
+    this._sideBar.scripts.setWindow(this);
 
     // Create the first tab
     this.createTab();

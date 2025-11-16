@@ -173,6 +173,59 @@ export class EventManager {
     ipcMain.handle("sidebar-get-messages", () => {
       return this.mainWindow.sidebar.client.getMessages();
     });
+
+    // Script management events
+    this.handleScriptEvents();
+  }
+
+  private handleScriptEvents(): void {
+    // Add a script
+    ipcMain.handle("add-script", (_, code: string, description?: string) => {
+      const script = this.mainWindow.sidebar.scripts.addScript(code, description);
+      return script;
+    });
+
+    // Get a script
+    ipcMain.handle("get-script", (_, scriptId: string) => {
+      return this.mainWindow.sidebar.scripts.getScript(scriptId);
+    });
+
+    // Get all scripts
+    ipcMain.handle("get-all-scripts", () => {
+      return this.mainWindow.sidebar.scripts.getAllScripts();
+    });
+
+    // Approve a script
+    ipcMain.handle("approve-script", (_, scriptId: string) => {
+      return this.mainWindow.sidebar.scripts.approveScript(scriptId);
+    });
+
+    // Execute a script
+    ipcMain.handle("execute-script", async (_, request) => {
+      const result = await this.mainWindow.sidebar.scripts.executeScript(request);
+      return result;
+    });
+
+    // Delete a script
+    ipcMain.handle("delete-script", (_, scriptId: string) => {
+      return this.mainWindow.sidebar.scripts.deleteScript(scriptId);
+    });
+
+    // Clear all scripts
+    ipcMain.handle("clear-all-scripts", () => {
+      this.mainWindow.sidebar.scripts.clearAllScripts();
+      return true;
+    });
+
+    // Extract code from text (useful for AI responses)
+    ipcMain.handle("extract-code", (_, text: string) => {
+      return this.mainWindow.sidebar.scripts.extractCodeFromResponse(text);
+    });
+
+    // Auto-extract and add script
+    ipcMain.handle("auto-extract-script", (_, response: string, description?: string) => {
+      return this.mainWindow.sidebar.scripts.autoExtractAndAddScript(response, description);
+    });
   }
 
   private handlePageContentEvents(): void {
