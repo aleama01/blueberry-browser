@@ -2,11 +2,12 @@ import React, { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
-import { ArrowUp, Square, Sparkles, Plus } from 'lucide-react'
+import { ArrowUp, Plus } from 'lucide-react'
 import { useChat } from '../contexts/ChatContext'
 import { cn } from '@common/lib/utils'
 import { Button } from '@common/components/Button'
 import { ModeToggle } from './ModeToggle'
+import { ScriptResult } from './ScriptResult'
 
 interface Message {
   id: string
@@ -269,7 +270,7 @@ const ConversationTurnComponent: React.FC<{
 
 // Main Chat Component
 export const Chat: React.FC = () => {
-  const { messages, isLoading, sendMessage, clearChat, chatMode, setChatMode } = useChat()
+  const { messages, isLoading, sendMessage, clearChat, chatMode, setChatMode, scripts } = useChat()
   const scrollRef = useAutoScroll(messages)
 
   // Group messages into conversation turns
@@ -292,6 +293,9 @@ export const Chat: React.FC = () => {
   // Check if we need to show loading after the last turn
   const showLoadingAfterLastTurn = isLoading &&
     messages[messages.length - 1]?.role === 'user'
+
+  // Get scripts that are relevant to display (recent and in agent mode)
+  const displayScripts = chatMode === 'agent' ? scripts : []
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -344,7 +348,7 @@ export const Chat: React.FC = () => {
               {/* Render conversation turns */}
               {conversationTurns.map((turn, index) => (
                 <ConversationTurnComponent
-                  key={`turn-${index}`}
+                  key={`turn-${turn.user?.id || turn.assistant?.id || index}`}
                   turn={turn}
                   isLoading={
                     showLoadingAfterLastTurn &&
@@ -352,6 +356,15 @@ export const Chat: React.FC = () => {
                   }
                 />
               ))}
+
+              {/* Render scripts in agent mode */}
+              {displayScripts.length > 0 && (
+                <div className="pt-12 space-y-4">
+                  {displayScripts.map(script => (
+                    <ScriptResult key={script.id} script={script} />
+                  ))}
+                </div>
+              )}
             </>
           )}
 

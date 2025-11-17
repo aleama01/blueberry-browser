@@ -2,6 +2,18 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 
 export type ChatMode = 'chat' | 'agent'
 
+interface Script {
+  id: string
+  code: string
+  description?: string
+  createdAt: number
+  status: 'pending' | 'approved' | 'running' | 'completed' | 'failed'
+  result?: any
+  error?: string
+  tabId?: string
+  executionTime?: number
+}
+
 interface Message {
   id: string
   role: 'user' | 'assistant'
@@ -14,11 +26,16 @@ interface ChatContextType {
   messages: Message[]
   isLoading: boolean
   chatMode: ChatMode
+  scripts: Script[]
 
   // Chat actions
   sendMessage: (content: string) => Promise<void>
   clearChat: () => void
   setChatMode: (mode: ChatMode) => void
+
+  // Script actions
+  getScripts: () => Promise<void>
+  approveAndExecuteScript: (scriptId: string) => Promise<void>
 
   // Page content access
   getPageContent: () => Promise<string | null>
@@ -40,6 +57,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [chatMode, setChatMode] = useState<ChatMode>('chat')
+  const [scripts, setScripts] = useState<Script[]>([])
 
   // Load initial messages from main process
   useEffect(() => {
@@ -65,6 +83,32 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     loadMessages()
   }, [])
+
+  // Load scripts from main process
+  const getScripts = useCallback(async () => {
+    try {
+      const allScripts = await window.sidebarAPI.getAllScripts()
+      setScripts(allScripts)
+    } catch (error) {
+      console.error('Failed to load scripts:', error)
+    }
+  }, [])
+
+  // Load scripts on mount
+  useEffect(() => {
+    getScripts()
+  }, [getScripts])
+
+  // Approve and execute a script
+  const approveAndExecuteScript = useCallback(async (scriptId: string) => {
+    try {
+      await window.sidebarAPI.approveScript(scriptId)
+      await window.sidebarAPI.executeScript({ scriptId })
+      await getScripts() // Refresh scripts after execution
+    } catch (error) {
+      console.error('Failed to execute script:', error)
+    }
+  }, [getScripts])
 
   const sendMessage = useCallback(async (content: string) => {
     setIsLoading(true)
@@ -152,12 +196,27 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setMessages(convertedMessages)
     }
 
+    // Listen for script updates
+    const handleScriptUpdated = (script: Script) => {
+      setScripts(prevScripts => {
+        const index = prevScripts.findIndex(s => s.id === script.id)
+        if (index >= 0) {
+          const newScripts = [...prevScripts]
+          newScripts[index] = script
+          return newScripts
+        }
+        return [...prevScripts, script]
+      })
+    }
+
     window.sidebarAPI.onChatResponse(handleChatResponse)
     window.sidebarAPI.onMessagesUpdated(handleMessagesUpdated)
+    window.sidebarAPI.onScriptUpdated(handleScriptUpdated)
 
     return () => {
       window.sidebarAPI.removeChatResponseListener()
       window.sidebarAPI.removeMessagesUpdatedListener()
+      window.sidebarAPI.removeScriptUpdateListener()
     }
   }, [])
 
@@ -165,9 +224,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     messages,
     isLoading,
     chatMode,
+    scripts,
     sendMessage,
     clearChat,
     setChatMode,
+    getScripts,
+    approveAndExecuteScript,
     getPageContent,
     getPageText,
     getCurrentUrl

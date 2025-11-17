@@ -11,6 +11,7 @@ export interface Script {
   result?: any;
   error?: string;
   tabId?: string;
+  executionTime?: number;
 }
 
 export interface ScriptExecutionRequest {

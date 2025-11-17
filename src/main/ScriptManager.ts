@@ -10,6 +10,7 @@ export interface Script {
   result?: any;
   error?: string;
   tabId?: string;
+  executionTime?: number;
 }
 
 export interface ScriptExecutionRequest {
@@ -152,9 +153,11 @@ export class ScriptManager {
       if (executionResult.success) {
         script.status = 'completed';
         script.result = executionResult.result;
+        script.executionTime = executionResult.executionTime;
       } else {
         script.status = 'failed';
         script.error = executionResult.error;
+        script.executionTime = executionResult.executionTime;
       }
       
       this.scripts.set(request.scriptId, script);
