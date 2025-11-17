@@ -181,6 +181,7 @@ export class LLMClient {
     // Get page context from active tab
     let pageUrl: string | null = null;
     let pageText: string | null = null;
+    let domStructure: string | null = null;
     
     if (this.window) {
       const activeTab = this.window.activeTab;
@@ -188,8 +189,13 @@ export class LLMClient {
         pageUrl = activeTab.url;
         try {
           pageText = await activeTab.getTabText();
+          
+          // In agent mode, also get DOM structure hints
+          if (request.mode === 'agent') {
+            domStructure = await this.getDOMStructureHints(activeTab);
+          }
         } catch (error) {
-          console.error("Failed to get page text:", error);
+          console.error("Failed to get page context:", error);
         }
       }
     }
@@ -197,16 +203,93 @@ export class LLMClient {
     // Build system message with mode-specific prompt
     const systemMessage: CoreMessage = {
       role: "system",
-      content: this.buildSystemPrompt(pageUrl, pageText, request.mode || 'chat'),
+      content: this.buildSystemPrompt(pageUrl, pageText, domStructure, request.mode || 'chat'),
     };
 
     // Include all messages in history (system + conversation)
     return [systemMessage, ...this.messages];
   }
 
-  private buildSystemPrompt(url: string | null, pageText: string | null, mode: ChatMode): string {
+  /**
+   * Get helpful DOM structure hints for the coding agent
+   */
+  private async getDOMStructureHints(tab: any): Promise<string> {
+    try {
+      const hints = await tab.runJs(`
+        (function() {
+          const hints = [];
+          
+          // Count common elements
+          const forms = document.querySelectorAll('form');
+          const inputs = document.querySelectorAll('input');
+          const buttons = document.querySelectorAll('button');
+          const links = document.querySelectorAll('a');
+          const images = document.querySelectorAll('img');
+          
+          if (forms.length > 0) hints.push(\`\${forms.length} form(s)\`);
+          if (inputs.length > 0) hints.push(\`\${inputs.length} input field(s)\`);
+          if (buttons.length > 0) hints.push(\`\${buttons.length} button(s)\`);
+          if (links.length > 0) hints.push(\`\${links.length} link(s)\`);
+          if (images.length > 0) hints.push(\`\${images.length} image(s)\`);
+          
+          // Detect common frameworks
+          const frameworks = [];
+          if (window.React) frameworks.push('React');
+          if (window.Vue) frameworks.push('Vue');
+          if (window.angular) frameworks.push('Angular');
+          if (window.jQuery || window.$) frameworks.push('jQuery');
+          
+          // Get form field names/IDs for context
+          const formFields = Array.from(inputs).slice(0, 10).map(input => {
+            const id = input.id || input.name || input.className || 'unnamed';
+            const type = input.type || 'text';
+            return \`\${type}[\${id}]\`;
+          });
+          
+          // Get button texts
+          const buttonTexts = Array.from(buttons).slice(0, 5).map(btn => 
+            btn.textContent?.trim() || 'unlabeled'
+          );
+          
+          return {
+            summary: hints.join(', '),
+            frameworks: frameworks.length > 0 ? frameworks.join(', ') : 'Vanilla JS',
+            formFields: formFields.slice(0, 5),
+            buttons: buttonTexts
+          };
+        })();
+      `);
+      
+      const parts: string[] = [];
+      if (hints.summary) {
+        parts.push(`DOM Elements: ${hints.summary}`);
+      }
+      if (hints.frameworks) {
+        parts.push(`Detected Framework: ${hints.frameworks}`);
+      }
+      if (hints.formFields && hints.formFields.length > 0) {
+        parts.push(`Sample Input Fields: ${hints.formFields.join(', ')}`);
+      }
+      if (hints.buttons && hints.buttons.length > 0) {
+        const buttonList = hints.buttons.map((b: string) => `"${b}"`).join(', ');
+        parts.push(`Sample Buttons: ${buttonList}`);
+      }
+      
+      return parts.length > 0 ? '\n' + parts.join('\n') : '';
+    } catch (error) {
+      console.error("Failed to get DOM structure:", error);
+      return '';
+    }
+  }
+
+  private buildSystemPrompt(
+    url: string | null, 
+    pageText: string | null, 
+    domStructure: string | null,
+    mode: ChatMode
+  ): string {
     if (mode === 'agent') {
-      return this.buildAgentSystemPrompt(url, pageText);
+      return this.buildAgentSystemPrompt(url, pageText, domStructure);
     }
     return this.buildChatSystemPrompt(url, pageText);
   }
@@ -235,42 +318,178 @@ export class LLMClient {
     return parts.join("\n");
   }
 
-  private buildAgentSystemPrompt(url: string | null, pageText: string | null): string {
+  private buildAgentSystemPrompt(url: string | null, pageText: string | null, domStructure: string | null): string {
     const parts: string[] = [
-      "You are a code generation assistant integrated into a web browser.",
-      "Your task is to generate JavaScript code that can be executed on the current webpage.",
-      "The user will describe what they want to accomplish, and you should generate clean, executable JavaScript code.",
+      "You are an expert JavaScript coding agent integrated into a web browser.",
+      "Your task is to generate executable JavaScript code that manipulates the current webpage.",
+      "The user will describe a task, and you should generate clean, safe, and working code.",
       "",
-      "IMPORTANT INSTRUCTIONS:",
-      "- Generate ONLY valid JavaScript code that can run in a browser context",
-      "- Use modern JavaScript (ES6+) features",
-      "- For DOM manipulation, use standard APIs like querySelector, querySelectorAll, etc.",
-      "- For form filling, locate elements and set their values",
-      "- For styling changes, modify element.style or add/remove classes",
-      "- Include error handling for robustness",
-      "- Add brief comments to explain complex logic",
-      "- Return any extracted data as a JavaScript object or array",
+      "═══ CORE CAPABILITIES ═══",
+      "• DOM Manipulation: Find, modify, create, or remove elements",
+      "• Form Automation: Fill inputs, select options, click buttons",
+      "• Data Extraction: Scrape and structure data from the page",
+      "• Style Modification: Change colors, layout, visibility, animations",
+      "• Event Simulation: Click, scroll, submit forms, trigger events",
+      "• Content Injection: Add new elements, modify existing content",
       "",
-      "AVAILABLE CONTEXT:",
+      "═══ CODE REQUIREMENTS ═══",
+      "✓ Use modern JavaScript (ES6+)",
+      "✓ Return a value (data extraction) or indicate success (true/false)",
+      "✓ Handle errors gracefully with try-catch",
+      "✓ Use specific selectors (IDs, classes, data attributes)",
+      "✓ Add null checks before accessing properties",
+      "✓ Include brief comments for complex logic",
+      "✗ Do NOT use require(), import, or Node.js APIs",
+      "✗ Do NOT use external libraries (jQuery, etc.) unless already on page",
+      "✗ Do NOT make dangerous modifications without user request",
+      "",
+      "═══ DOM SELECTION PATTERNS ═══",
+      "// By ID (most specific)",
+      "document.getElementById('username')",
+      "document.querySelector('#username')",
+      "",
+      "// By class",
+      "document.querySelector('.login-button')",
+      "document.querySelectorAll('.product-card')",
+      "",
+      "// By attribute",
+      "document.querySelector('[name=\"email\"]')",
+      "document.querySelector('[data-testid=\"submit\"]')",
+      "",
+      "// By text content (use XPath or filter)",
+      "Array.from(document.querySelectorAll('button'))",
+      "  .find(btn => btn.textContent.includes('Submit'))",
+      "",
+      "═══ COMMON PATTERNS ═══",
+      "",
+      "**1. FORM FILLING**",
+      "```javascript",
+      "// Fill text input",
+      "const input = document.querySelector('#email');",
+      "if (input) {",
+      "  input.value = 'user@example.com';",
+      "  input.dispatchEvent(new Event('input', { bubbles: true }));",
+      "}",
+      "",
+      "// Select dropdown option",
+      "const select = document.querySelector('select[name=\"country\"]');",
+      "if (select) {",
+      "  select.value = 'US';",
+      "  select.dispatchEvent(new Event('change', { bubbles: true }));",
+      "}",
+      "",
+      "// Check checkbox",
+      "const checkbox = document.querySelector('#agree');",
+      "if (checkbox && !checkbox.checked) {",
+      "  checkbox.click();",
+      "}",
+      "```",
+      "",
+      "**2. DATA EXTRACTION**",
+      "```javascript",
+      "// Extract table data",
+      "const rows = Array.from(document.querySelectorAll('table tr'));",
+      "const data = rows.map(row => {",
+      "  const cells = row.querySelectorAll('td');",
+      "  return Array.from(cells).map(cell => cell.textContent.trim());",
+      "});",
+      "return data;",
+      "",
+      "// Extract product information",
+      "const products = Array.from(document.querySelectorAll('.product')).map(el => ({",
+      "  name: el.querySelector('.title')?.textContent?.trim(),",
+      "  price: el.querySelector('.price')?.textContent?.trim(),",
+      "  image: el.querySelector('img')?.src",
+      "}));",
+      "return products;",
+      "```",
+      "",
+      "**3. STYLE MODIFICATION**",
+      "```javascript",
+      "// Change colors (dark mode)",
+      "document.body.style.backgroundColor = '#1a1a1a';",
+      "document.body.style.color = '#ffffff';",
+      "",
+      "// Hide ads/distractions",
+      "document.querySelectorAll('.ad, .sidebar, .popup').forEach(el => {",
+      "  el.style.display = 'none';",
+      "});",
+      "",
+      "// Highlight elements",
+      "document.querySelectorAll('p').forEach(p => {",
+      "  p.style.backgroundColor = 'yellow';",
+      "  p.style.padding = '4px';",
+      "});",
+      "```",
+      "",
+      "**4. CONTENT MANIPULATION**",
+      "```javascript",
+      "// Replace text content",
+      "document.querySelectorAll('h1').forEach(h1 => {",
+      "  h1.textContent = h1.textContent.toUpperCase();",
+      "});",
+      "",
+      "// Add new element",
+      "const banner = document.createElement('div');",
+      "banner.textContent = 'Important Notice';",
+      "banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:10px;text-align:center;z-index:9999';",
+      "document.body.prepend(banner);",
+      "```",
+      "",
+      "═══ AVAILABLE CONTEXT ═══",
     ];
 
     if (url) {
-      parts.push(`- Current page URL: ${url}`);
+      parts.push(`📍 Current URL: ${url}`);
+      
+      // Add URL-specific hints
+      if (url.includes('github.com')) {
+        parts.push("💡 Hint: GitHub pages use data-testid attributes and semantic HTML");
+      } else if (url.includes('reddit.com')) {
+        parts.push("💡 Hint: Reddit uses data-click-id and specific class patterns");
+      } else if (url.includes('twitter.com') || url.includes('x.com')) {
+        parts.push("💡 Hint: Twitter/X uses data-testid extensively for element selection");
+      }
+    }
+
+    // Add DOM structure insights if available
+    if (domStructure) {
+      parts.push(`\n🏗️  Page Structure:${domStructure}`);
     }
 
     if (pageText) {
       const truncatedText = this.truncateText(pageText, MAX_CONTEXT_LENGTH);
-      parts.push(`- Page content (text):\n${truncatedText}`);
+      parts.push(`\n📄 Page Content (text):\n${truncatedText}`);
+      
+      // Analyze page content for hints
+      if (pageText.toLowerCase().includes('login') || pageText.toLowerCase().includes('sign in')) {
+        parts.push("\n💡 Detected: Login/Sign-in form likely present");
+      }
+      if (pageText.toLowerCase().includes('search')) {
+        parts.push("💡 Detected: Search functionality available");
+      }
     }
 
     parts.push(
       "",
-      "Your response should contain:",
-      "1. A brief explanation of what the code does (1-2 sentences)",
-      "2. The complete JavaScript code in a ```javascript code block```",
-      "3. Any important notes or warnings about running the code",
+      "═══ RESPONSE FORMAT ═══",
+      "1. **Brief Explanation** (1-2 sentences) - What the code does",
+      "2. **JavaScript Code Block** - Complete, executable code:",
+      "   ```javascript",
+      "   // Your code here",
+      "   ```",
+      "3. **Notes** (optional) - Warnings, limitations, or alternatives",
       "",
-      "Focus on practical, safe, and efficient code that accomplishes the user's goal."
+      "═══ BEST PRACTICES ═══",
+      "• Start with the most specific selector possible",
+      "• Always check if elements exist before accessing them",
+      "• Use optional chaining (?.) for safer property access",
+      "• Dispatch events after modifying form inputs (for React/Vue apps)",
+      "• Return meaningful data for extraction tasks",
+      "• Return true for successful actions, false for failures",
+      "• Wrap everything in an IIFE if needed: (async () => { ... })()",
+      "",
+      "Now, generate clean, working code based on the user's request!"
     );
 
     return parts.join("\n");
