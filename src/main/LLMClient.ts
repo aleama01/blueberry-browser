@@ -439,19 +439,6 @@ export class LLMClient {
       "═══ AVAILABLE CONTEXT ═══",
     ];
 
-    if (url) {
-      parts.push(`📍 Current URL: ${url}`);
-      
-      // Add URL-specific hints
-      if (url.includes('github.com')) {
-        parts.push("💡 Hint: GitHub pages use data-testid attributes and semantic HTML");
-      } else if (url.includes('reddit.com')) {
-        parts.push("💡 Hint: Reddit uses data-click-id and specific class patterns");
-      } else if (url.includes('twitter.com') || url.includes('x.com')) {
-        parts.push("💡 Hint: Twitter/X uses data-testid extensively for element selection");
-      }
-    }
-
     // Add DOM structure insights if available
     if (domStructure) {
       parts.push(`\n🏗️  Page Structure:${domStructure}`);
@@ -488,6 +475,21 @@ export class LLMClient {
       "• Return meaningful data for extraction tasks",
       "• Return true for successful actions, false for failures",
       "• Wrap everything in an IIFE if needed: (async () => { ... })()",
+      "",
+      "═══ AVAILABLE HELPERS ═══",
+      "Your scripts run in an enhanced execution context with helper functions:",
+      "",
+      "**log(...args)** - Log messages (tagged for debugging)",
+      "  Example: log('Processing', items.length, 'items');",
+      "",
+      "**safeQuery(selector)** - Safe querySelector (won't throw, returns null)",
+      "  Example: const btn = safeQuery('#submit-button');",
+      "",
+      "**safeQueryAll(selector)** - Safe querySelectorAll (won't throw, returns [])",
+      "  Example: const items = safeQueryAll('.product-item');",
+      "",
+      "These helpers are automatically available in your script execution context.",
+      "Use them for safer DOM access and easier debugging!",
       "",
       "Now, generate clean, working code based on the user's request!"
     );

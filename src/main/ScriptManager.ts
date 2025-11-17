@@ -141,31 +141,33 @@ export class ScriptManager {
     this.scripts.set(request.scriptId, script);
     this.notifyScriptUpdate(script);
 
-    const startTime = Date.now();
-
     try {
-      // Execute the script with timeout
-      const result = await this.executeWithTimeout(
-        () => tab.runJs(this.wrapScriptInSandbox(script.code)),
-        SCRIPT_TIMEOUT
-      );
+      // Use the enhanced executeScript method from Tab
+      const executionResult = await tab.executeScript(script.code, {
+        timeout: SCRIPT_TIMEOUT,
+        returnRawResult: false,
+      });
 
-      const executionTime = Date.now() - startTime;
-
-      // Update script with success
-      script.status = 'completed';
-      script.result = result;
+      // Update script with result
+      if (executionResult.success) {
+        script.status = 'completed';
+        script.result = executionResult.result;
+      } else {
+        script.status = 'failed';
+        script.error = executionResult.error;
+      }
+      
       this.scripts.set(request.scriptId, script);
       this.notifyScriptUpdate(script);
 
       return {
         scriptId: request.scriptId,
-        success: true,
-        result,
-        executionTime,
+        success: executionResult.success,
+        result: executionResult.result,
+        error: executionResult.error,
+        executionTime: executionResult.executionTime,
       };
     } catch (error) {
-      const executionTime = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
       // Update script with error
@@ -178,7 +180,7 @@ export class ScriptManager {
         scriptId: request.scriptId,
         success: false,
         error: errorMessage,
-        executionTime,
+        executionTime: 0,
       };
     }
   }
@@ -242,42 +244,6 @@ export class ScriptManager {
     }
 
     return { valid: true };
-  }
-
-  /**
-   * Wrap script in a sandbox with error handling and timeout
-   */
-  private wrapScriptInSandbox(code: string): string {
-    return `
-(async function() {
-  try {
-    // User script starts here
-    ${code}
-    // User script ends here
-  } catch (error) {
-    return {
-      __error: true,
-      message: error.message,
-      stack: error.stack
-    };
-  }
-})();
-    `.trim();
-  }
-
-  /**
-   * Execute a function with timeout
-   */
-  private async executeWithTimeout<T>(
-    fn: () => Promise<T>,
-    timeout: number
-  ): Promise<T> {
-    return Promise.race([
-      fn(),
-      new Promise<T>((_, reject) =>
-        setTimeout(() => reject(new Error(`Script execution timeout after ${timeout}ms`)), timeout)
-      ),
-    ]);
   }
 
   /**

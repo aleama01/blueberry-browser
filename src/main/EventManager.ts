@@ -226,6 +226,33 @@ export class EventManager {
     ipcMain.handle("auto-extract-script", (_, response: string, description?: string) => {
       return this.mainWindow.sidebar.scripts.autoExtractAndAddScript(response, description);
     });
+
+    // Advanced tab script execution
+    ipcMain.handle("tab-execute-script", async (_, tabId: string, code: string, options?: any) => {
+      const tab = this.mainWindow.getTab(tabId);
+      if (!tab) {
+        return { success: false, error: 'Tab not found' };
+      }
+      return await tab.executeScript(code, options);
+    });
+
+    // Check if tab page is ready
+    ipcMain.handle("tab-is-ready", async (_, tabId: string) => {
+      const tab = this.mainWindow.getTab(tabId);
+      if (!tab) {
+        return false;
+      }
+      return await tab.isPageReady();
+    });
+
+    // Wait for tab page to be ready
+    ipcMain.handle("tab-wait-ready", async (_, tabId: string, timeout?: number) => {
+      const tab = this.mainWindow.getTab(tabId);
+      if (!tab) {
+        return false;
+      }
+      return await tab.waitForPageReady(timeout);
+    });
   }
 
   private handlePageContentEvents(): void {
