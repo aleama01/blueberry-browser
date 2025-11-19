@@ -25,7 +25,7 @@ interface StreamChunk {
 type LLMProvider = "openai" | "anthropic";
 
 const DEFAULT_MODELS: Record<LLMProvider, string> = {
-  openai: "gpt-4o-mini",
+  openai: "gpt-4.1-nano",
   anthropic: "claude-3-5-sonnet-20241022",
 };
 
@@ -157,7 +157,8 @@ export class LLMClient {
       }
 
       const messages = await this.prepareMessagesWithContext(request);
-      await this.streamResponse(messages, request.messageId);
+      console.log("Prepared Messages:\n", messages);
+      await this.streamResponse(messages, request.messageId, request);
     } catch (error) {
       console.error("Error in LLM request:", error);
       this.handleStreamError(error, request.messageId);
@@ -185,6 +186,7 @@ export class LLMClient {
     
     if (this.window) {
       const activeTab = this.window.activeTab;
+
       if (activeTab) {
         pageUrl = activeTab.url;
         try {
@@ -211,73 +213,527 @@ export class LLMClient {
   }
 
   /**
-   * Get helpful DOM structure hints for the coding agent
+   * Get comprehensive DOM structure and element hints for the coding agent.
+   * Provides actionable selectors, accessibility info, and code generation guidance.
    */
   private async getDOMStructureHints(tab: any): Promise<string> {
     try {
       const hints = await tab.runJs(`
         (function() {
-          const hints = [];
-          
-          // Count common elements
-          const forms = document.querySelectorAll('form');
-          const inputs = document.querySelectorAll('input');
-          const buttons = document.querySelectorAll('button');
-          const links = document.querySelectorAll('a');
-          const images = document.querySelectorAll('img');
-          
-          if (forms.length > 0) hints.push(\`\${forms.length} form(s)\`);
-          if (inputs.length > 0) hints.push(\`\${inputs.length} input field(s)\`);
-          if (buttons.length > 0) hints.push(\`\${buttons.length} button(s)\`);
-          if (links.length > 0) hints.push(\`\${links.length} link(s)\`);
-          if (images.length > 0) hints.push(\`\${images.length} image(s)\`);
-          
-          // Detect common frameworks
-          const frameworks = [];
-          if (window.React) frameworks.push('React');
-          if (window.Vue) frameworks.push('Vue');
-          if (window.angular) frameworks.push('Angular');
-          if (window.jQuery || window.$) frameworks.push('jQuery');
-          
-          // Get form field names/IDs for context
-          const formFields = Array.from(inputs).slice(0, 10).map(input => {
-            const id = input.id || input.name || input.className || 'unnamed';
-            const type = input.type || 'text';
-            return \`\${type}[\${id}]\`;
-          });
-          
-          // Get button texts
-          const buttonTexts = Array.from(buttons).slice(0, 5).map(btn => 
-            btn.textContent?.trim() || 'unlabeled'
-          );
-          
-          return {
-            summary: hints.join(', '),
-            frameworks: frameworks.length > 0 ? frameworks.join(', ') : 'Vanilla JS',
-            formFields: formFields.slice(0, 5),
-            buttons: buttonTexts
+          const result = {
+            pageInfo: {},
+            semantic: {},
+            interactive: {},
+            frameworks: [],
+            selectors: {}
           };
+
+          // ═══════════════════════════════════════════════════════════
+          // PAGE INFO - Basic page structure and metadata
+          // ═══════════════════════════════════════════════════════════
+          result.pageInfo = {
+            title: document.title || 'Untitled',
+            lang: document.documentElement.lang || 'unknown',
+            hasViewport: !!document.querySelector('meta[name="viewport"]'),
+            bodyClasses: Array.from(document.body.classList).slice(0, 3),
+            documentHeight: document.documentElement.scrollHeight,
+            viewportHeight: window.innerHeight
+          };
+
+          // ═══════════════════════════════════════════════════════════
+          // FRAMEWORK DETECTION - Identify libraries and frameworks
+          // ═══════════════════════════════════════════════════════════
+          if (window.React || document.querySelector('[data-reactroot], [data-reactid]')) {
+            result.frameworks.push('React');
+          }
+          if (window.Vue || document.querySelector('[data-v-]')) {
+            result.frameworks.push('Vue');
+          }
+          if (window.angular || document.querySelector('[ng-app], [ng-controller]')) {
+            result.frameworks.push('Angular');
+          }
+          if (window.jQuery || window.$) {
+            result.frameworks.push('jQuery v' + (window.$ && window.$.fn && window.$.fn.jquery || 'unknown'));
+          }
+
+          // ═══════════════════════════════════════════════════════════
+          // HELPER: Build multiple selector strategies for an element
+          // ═══════════════════════════════════════════════════════════
+          function buildSelectors(el) {
+            const selectors = [];
+            
+            // Strategy 1: ID (most reliable, highest priority)
+            if (el.id) {
+              selectors.push({
+                type: 'id',
+                selector: '#' + CSS.escape(el.id),
+                reliability: 'high',
+                code: \`document.querySelector('#\${CSS.escape(el.id)}')\`
+              });
+            }
+            
+            // Strategy 2: Name attribute (forms)
+            if (el.name) {
+              selectors.push({
+                type: 'name',
+                selector: '[name="' + el.name + '"]',
+                reliability: 'high',
+                code: \`document.querySelector('[name="\${el.name}"]')\`
+              });
+            }
+            
+            // Strategy 3: Data attributes (modern apps)
+            const dataAttrs = Array.from(el.attributes).filter(a => a.name.startsWith('data-'));
+            if (dataAttrs.length > 0) {
+              const attr = dataAttrs[0];
+              selectors.push({
+                type: 'data-attribute',
+                selector: '[' + attr.name + '="' + attr.value + '"]',
+                reliability: 'medium-high',
+                code: \`document.querySelector('[\${attr.name}="\${attr.value}"]')\`
+              });
+            }
+            
+            // Strategy 4: ARIA labels (accessibility-first)
+            const ariaLabel = el.getAttribute('aria-label');
+            if (ariaLabel) {
+              selectors.push({
+                type: 'aria-label',
+                selector: '[aria-label="' + ariaLabel + '"]',
+                reliability: 'medium',
+                code: \`document.querySelector('[aria-label="\${ariaLabel}"]')\`
+              });
+            }
+            
+            // Strategy 5: Placeholder (inputs)
+            if (el.placeholder) {
+              selectors.push({
+                type: 'placeholder',
+                selector: '[placeholder="' + el.placeholder + '"]',
+                reliability: 'medium',
+                code: \`document.querySelector('[placeholder="\${el.placeholder}"]')\`
+              });
+            }
+            
+            // Strategy 6: Test IDs (common in modern frameworks)
+            const testId = el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-cy');
+            if (testId) {
+              const attrName = el.getAttribute('data-testid') ? 'data-testid' : 
+                             el.getAttribute('data-test-id') ? 'data-test-id' : 'data-cy';
+              selectors.push({
+                type: 'test-id',
+                selector: '[' + attrName + '="' + testId + '"]',
+                reliability: 'high',
+                code: \`document.querySelector('[\${attrName}="\${testId}"]')\`
+              });
+            }
+            
+            // Strategy 7: Classes (less reliable but useful)
+            if (el.className && typeof el.className === 'string') {
+              const classes = el.className.trim().split(/\\s+/).filter(c => c && !c.match(/^(css-|_)/));
+              if (classes.length > 0) {
+                const classStr = classes.slice(0, 2).join('.');
+                selectors.push({
+                  type: 'class',
+                  selector: el.tagName.toLowerCase() + '.' + classStr,
+                  reliability: 'low-medium',
+                  code: \`document.querySelector('\${el.tagName.toLowerCase()}.\${classStr}')\`
+                });
+              }
+            }
+            
+            // Strategy 8: XPath for complex hierarchies
+            function getXPath(element) {
+              if (element.id) return '//*[@id="' + element.id + '"]';
+              if (element === document.body) return '/html/body';
+              
+              let ix = 0;
+              const siblings = element.parentNode ? element.parentNode.childNodes : [];
+              for (let i = 0; i < siblings.length; i++) {
+                const sibling = siblings[i];
+                if (sibling === element) {
+                  const parentPath = element.parentNode ? getXPath(element.parentNode) : '';
+                  return parentPath + '/' + element.tagName.toLowerCase() + '[' + (ix + 1) + ']';
+                }
+                if (sibling.nodeType === 1 && sibling.tagName === element.tagName) {
+                  ix++;
+                }
+              }
+            }
+            
+            const xpath = getXPath(el);
+            if (xpath) {
+              selectors.push({
+                type: 'xpath',
+                selector: xpath,
+                reliability: 'high',
+                code: \`document.evaluate("\${xpath}", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue\`
+              });
+            }
+            
+            return selectors;
+          }
+
+          // ═══════════════════════════════════════════════════════════
+          // HELPER: Get semantic context (parent structure)
+          // ═══════════════════════════════════════════════════════════
+          function getContext(el) {
+            const contexts = [];
+            let parent = el.parentElement;
+            let depth = 0;
+            
+            while (parent && depth < 5) {
+              const tag = parent.tagName.toLowerCase();
+              
+              // Semantic containers
+              if (['form', 'header', 'footer', 'nav', 'main', 'aside', 'section', 'article'].includes(tag)) {
+                const id = parent.id ? '#' + parent.id : '';
+                const role = parent.getAttribute('role') || '';
+                contexts.push({
+                  tag: tag,
+                  id: id,
+                  role: role,
+                  depth: depth
+                });
+              }
+              
+              // ARIA landmarks
+              if (parent.getAttribute('role')) {
+                contexts.push({
+                  tag: tag,
+                  role: parent.getAttribute('role'),
+                  depth: depth
+                });
+              }
+              
+              parent = parent.parentElement;
+              depth++;
+            }
+            
+            return contexts;
+          }
+
+          // ═══════════════════════════════════════════════════════════
+          // HELPER: Extract compact HTML for reference
+          // ═══════════════════════════════════════════════════════════
+          function getCompactHTML(el, maxLength = 400) {
+            let html = el.outerHTML;
+            
+            // For elements with children, just show opening tag
+            if (el.children.length > 0) {
+              const match = html.match(/^<[^>]+>/);
+              return match ? match[0] : html.substring(0, maxLength);
+            }
+            
+            // For leaf elements, show full HTML but truncate if needed
+            if (html.length > maxLength) {
+              return html.substring(0, maxLength) + '...';
+            }
+            
+            return html;
+          }
+
+          // ═══════════════════════════════════════════════════════════
+          // SEMANTIC ELEMENTS - Page structure and navigation
+          // ═══════════════════════════════════════════════════════════
+          result.semantic.landmarks = Array.from(
+            document.querySelectorAll('main, nav, header, footer, aside, [role="main"], [role="navigation"], [role="banner"], [role="contentinfo"]')
+          ).slice(0, 8).map(el => ({
+            tag: el.tagName.toLowerCase(),
+            role: el.getAttribute('role'),
+            id: el.id || null,
+            selectors: buildSelectors(el).slice(0, 3),
+            html: getCompactHTML(el, 200)
+          }));
+
+          result.semantic.headings = Array.from(
+            document.querySelectorAll('h1, h2, h3, h4, h5, h6')
+          ).slice(0, 12).map(h => ({
+            level: h.tagName.toLowerCase(),
+            text: h.textContent.trim().substring(0, 80),
+            id: h.id || null,
+            selectors: buildSelectors(h).slice(0, 2)
+          }));
+
+          result.semantic.links = Array.from(
+            document.querySelectorAll('a[href]')
+          ).slice(0, 20).map(a => ({
+            text: a.textContent.trim().substring(0, 50),
+            href: a.href,
+            target: a.target || null,
+            rel: a.rel || null,
+            selectors: buildSelectors(a).slice(0, 2)
+          }));
+
+          // ═══════════════════════════════════════════════════════════
+          // INTERACTIVE ELEMENTS - Forms, inputs, buttons
+          // ═══════════════════════════════════════════════════════════
+          
+          // Forms
+          result.interactive.forms = Array.from(document.querySelectorAll('form')).slice(0, 5).map((form, idx) => {
+            const fields = form.querySelectorAll('input, textarea, select, button');
+            return {
+              index: idx,
+              action: form.action || null,
+              method: form.method || 'GET',
+              fieldCount: fields.length,
+              selectors: buildSelectors(form),
+              context: getContext(form),
+              html: getCompactHTML(form, 300)
+            };
+          });
+
+          // Inputs & Textareas
+          result.interactive.inputs = Array.from(
+            document.querySelectorAll('input:not([type="hidden"]), textarea')
+          ).slice(0, 20).map((input, idx) => {
+            const label = input.labels && input.labels[0] ? input.labels[0].textContent.trim() : 
+                         input.getAttribute('aria-label') || 
+                         input.getAttribute('placeholder') || null;
+            
+            return {
+              index: idx,
+              tag: input.tagName.toLowerCase(),
+              type: input.type || 'text',
+              label: label,
+              name: input.name || null,
+              value: input.value ? '***' : null, // Don't leak sensitive data
+              required: input.required || input.getAttribute('aria-required') === 'true',
+              disabled: input.disabled,
+              selectors: buildSelectors(input),
+              context: getContext(input),
+              html: getCompactHTML(input)
+            };
+          });
+
+          // Buttons & Clickable elements
+          result.interactive.buttons = Array.from(
+            document.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"], a.btn, a.button')
+          ).slice(0, 15).map((btn, idx) => {
+            const text = btn.textContent ? btn.textContent.trim() : 
+                        btn.value || 
+                        btn.getAttribute('aria-label') || 
+                        btn.getAttribute('title') || '';
+            
+            return {
+              index: idx,
+              tag: btn.tagName.toLowerCase(),
+              type: btn.type || null,
+              text: text.substring(0, 60),
+              disabled: btn.disabled || btn.getAttribute('aria-disabled') === 'true',
+              selectors: buildSelectors(btn),
+              context: getContext(btn),
+              html: getCompactHTML(btn, 300)
+            };
+          });
+
+          // Select dropdowns
+          result.interactive.selects = Array.from(document.querySelectorAll('select')).slice(0, 10).map((select, idx) => {
+            const label = select.labels && select.labels[0] ? select.labels[0].textContent.trim() : 
+                         select.getAttribute('aria-label') || null;
+            
+            const options = Array.from(select.options).slice(0, 5).map(opt => ({
+              value: opt.value,
+              text: opt.textContent.trim(),
+              selected: opt.selected
+            }));
+            
+            return {
+              index: idx,
+              label: label,
+              name: select.name || null,
+              optionCount: select.options.length,
+              options: options,
+              required: select.required,
+              selectors: buildSelectors(select),
+              context: getContext(select),
+              html: getCompactHTML(select, 400)
+            };
+          });
+
+          // Checkboxes & Radios
+          result.interactive.checkboxesRadios = Array.from(
+            document.querySelectorAll('input[type="checkbox"], input[type="radio"]')
+          ).slice(0, 15).map((input, idx) => {
+            const label = input.labels && input.labels[0] ? input.labels[0].textContent.trim() : 
+                         input.getAttribute('aria-label') || null;
+            
+            return {
+              index: idx,
+              type: input.type,
+              name: input.name || null,
+              value: input.value || null,
+              checked: input.checked,
+              label: label,
+              selectors: buildSelectors(input),
+              html: getCompactHTML(input)
+            };
+          });
+
+          // ═══════════════════════════════════════════════════════════
+          // COMMON SELECTOR PATTERNS - Pre-built queries
+          // ═══════════════════════════════════════════════════════════
+          result.selectors.byId = Array.from(new Set(
+            Array.from(document.querySelectorAll('[id]')).map(el => el.id).filter(id => id)
+          )).slice(0, 30);
+
+          result.selectors.byDataTestId = Array.from(new Set(
+            Array.from(document.querySelectorAll('[data-testid], [data-test-id], [data-cy]')).map(el => 
+              el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-cy')
+            ).filter(id => id)
+          )).slice(0, 20);
+
+          result.selectors.byAriaLabel = Array.from(new Set(
+            Array.from(document.querySelectorAll('[aria-label]')).map(el => el.getAttribute('aria-label')).filter(l => l)
+          )).slice(0, 20);
+
+          return result;
         })();
       `);
+
+      // Format the output for the LLM
+      const output: string[] = [];
       
-      const parts: string[] = [];
-      if (hints.summary) {
-        parts.push(`DOM Elements: ${hints.summary}`);
+      // Page overview
+      output.push('═══════════════════════════════════════════════════════');
+      output.push('PAGE STRUCTURE & ELEMENT REFERENCE');
+      output.push('═══════════════════════════════════════════════════════');
+      output.push(`Title: ${hints.pageInfo.title}`);
+      output.push(`Language: ${hints.pageInfo.lang}`);
+      if (hints.frameworks.length > 0) {
+        output.push(`Frameworks: ${hints.frameworks.join(', ')}`);
       }
-      if (hints.frameworks) {
-        parts.push(`Detected Framework: ${hints.frameworks}`);
+      output.push('');
+
+      // Semantic structure
+      if (hints.semantic.landmarks && hints.semantic.landmarks.length > 0) {
+        output.push('LANDMARKS & SEMANTIC STRUCTURE');
+        output.push('Use these to navigate and scope your queries:');
+        hints.semantic.landmarks.forEach((landmark: any) => {
+          const idInfo = landmark.id ? ` id="${landmark.id}"` : '';
+          const roleInfo = landmark.role ? ` role="${landmark.role}"` : '';
+          output.push(`  <${landmark.tag}${idInfo}${roleInfo}>`);
+          if (landmark.selectors && landmark.selectors.length > 0) {
+            output.push(`    Primary: ${landmark.selectors[0].code}`);
+          }
+        });
+        output.push('');
       }
-      if (hints.formFields && hints.formFields.length > 0) {
-        parts.push(`Sample Input Fields: ${hints.formFields.join(', ')}`);
+
+      // Forms
+      if (hints.interactive.forms && hints.interactive.forms.length > 0) {
+        output.push('FORMS (' + hints.interactive.forms.length + ' found)');
+        hints.interactive.forms.forEach((form: any, idx: number) => {
+          output.push(`  Form #${idx + 1}: ${form.fieldCount} fields, method=${form.method}`);
+          if (form.selectors && form.selectors.length > 0) {
+            output.push(`    Best selector: ${form.selectors[0].code}`);
+            if (form.selectors.length > 1) {
+              output.push(`    Alternative: ${form.selectors[1].code}`);
+            }
+          }
+          output.push(`    HTML: ${form.html}`);
+        });
+        output.push('');
       }
-      if (hints.buttons && hints.buttons.length > 0) {
-        const buttonList = hints.buttons.map((b: string) => `"${b}"`).join(', ');
-        parts.push(`Sample Buttons: ${buttonList}`);
+
+      // Inputs
+      if (hints.interactive.inputs && hints.interactive.inputs.length > 0) {
+        output.push('INPUTS & TEXTAREAS (' + hints.interactive.inputs.length + ' found)');
+        hints.interactive.inputs.forEach((input: any, idx: number) => {
+          const labelInfo = input.label ? ` "${input.label}"` : '';
+          const typeInfo = input.type !== 'text' ? ` [${input.type}]` : '';
+          const reqInfo = input.required ? ' *required*' : '';
+          output.push(`  Input #${idx + 1}:${labelInfo}${typeInfo}${reqInfo}`);
+          
+          if (input.selectors && input.selectors.length > 0) {
+            // Show top 2 selector strategies
+            input.selectors.slice(0, 2).forEach((sel: any) => {
+              output.push(`    ${sel.type} (${sel.reliability}): ${sel.code}`);
+            });
+          }
+          output.push(`    HTML: ${input.html}`);
+        });
+        output.push('');
       }
+
+      // Buttons
+      if (hints.interactive.buttons && hints.interactive.buttons.length > 0) {
+        output.push('BUTTONS & CLICKABLE ELEMENTS (' + hints.interactive.buttons.length + ' found)');
+        hints.interactive.buttons.forEach((btn: any, idx: number) => {
+          const disabledInfo = btn.disabled ? ' [DISABLED]' : '';
+          output.push(`  Button #${idx + 1}: "${btn.text}"${disabledInfo}`);
+          
+          if (btn.selectors && btn.selectors.length > 0) {
+            // Show top 2 selector strategies
+            btn.selectors.slice(0, 2).forEach((sel: any) => {
+              output.push(`    ${sel.type} (${sel.reliability}): ${sel.code}`);
+            });
+          }
+          output.push(`    HTML: ${btn.html}`);
+        });
+        output.push('');
+      }
+
+      // Selects
+      if (hints.interactive.selects && hints.interactive.selects.length > 0) {
+        output.push('SELECT DROPDOWNS (' + hints.interactive.selects.length + ' found)');
+        hints.interactive.selects.forEach((select: any, idx: number) => {
+          const labelInfo = select.label ? ` "${select.label}"` : '';
+          output.push(`  Select #${idx + 1}:${labelInfo} (${select.optionCount} options)`);
+          
+          if (select.options && select.options.length > 0) {
+            output.push(`    Options: ${select.options.map((o: any) => o.text).join(', ')}`);
+          }
+          
+          if (select.selectors && select.selectors.length > 0) {
+            output.push(`    Best selector: ${select.selectors[0].code}`);
+          }
+          output.push(`    HTML: ${select.html}`);
+        });
+        output.push('');
+      }
+
+      // Checkboxes & Radios
+      if (hints.interactive.checkboxesRadios && hints.interactive.checkboxesRadios.length > 0) {
+        output.push('CHECKBOXES & RADIOS (' + hints.interactive.checkboxesRadios.length + ' found)');
+        hints.interactive.checkboxesRadios.forEach((input: any, idx: number) => {
+          const labelInfo = input.label ? ` "${input.label}"` : '';
+          const checkedInfo = input.checked ? ' ✓' : '';
+          output.push(`  ${input.type} #${idx + 1}:${labelInfo}${checkedInfo}`);
+          
+          if (input.selectors && input.selectors.length > 0) {
+            output.push(`    Selector: ${input.selectors[0].code}`);
+          }
+        });
+        output.push('');
+      }
+
+      // Quick reference lists
+      if (hints.selectors.byId && hints.selectors.byId.length > 0) {
+        output.push('QUICK REFERENCE: IDs');
+        output.push(`  Available IDs: ${hints.selectors.byId.slice(0, 15).join(', ')}`);
+        output.push('');
+      }
+
+      if (hints.selectors.byDataTestId && hints.selectors.byDataTestId.length > 0) {
+        output.push('QUICK REFERENCE: Test IDs');
+        output.push(`  Available test IDs: ${hints.selectors.byDataTestId.slice(0, 10).join(', ')}`);
+        output.push('');
+      }
+
+      // Code generation guidance
+      output.push('CODE GENERATION TIPS');
+      output.push('1. Prefer selectors with "high" reliability (ID, name, test-id, xpath)');
+      output.push('2. Use the exact code snippets provided above');
+      output.push('3. Add null checks: const el = document.querySelector(...); if (!el) return;');
+      output.push('4. For forms, use fillForm() helper with name/ID-based field mapping');
+      output.push('5. For clicks, use click() helper which handles both selector strings and elements');
+      output.push('6. Combine selectors when needed: form.querySelector(\'input[name="email"]\')');
+
+      return output.join('\n');
       
-      return parts.length > 0 ? '\n' + parts.join('\n') : '';
     } catch (error) {
-      console.error("Failed to get DOM structure:", error);
+      console.error('Failed to analyze DOM structure:', error);
       return '';
     }
   }
@@ -290,8 +746,9 @@ export class LLMClient {
   ): string {
     if (mode === 'agent') {
       return this.buildAgentSystemPrompt(url, pageText, domStructure);
+    }else{
+      return this.buildChatSystemPrompt(url, pageText);
     }
-    return this.buildChatSystemPrompt(url, pageText);
   }
 
   private buildChatSystemPrompt(url: string | null, pageText: string | null): string {
@@ -324,6 +781,10 @@ export class LLMClient {
       "Your task is to generate executable JavaScript code that manipulates the current webpage.",
       "The user will describe a task, and you should generate clean, safe, and working code.",
       "",
+      "═══ VISUAL CONTEXT ═══",
+      "The user's messages include a screenshot of the current page as the first image.",
+      "Use the screenshot alongside the following page context to inform your code generation.",
+      "",
       "═══ CORE CAPABILITIES ═══",
       "• DOM Manipulation: Find, modify, create, or remove elements",
       "• Form Automation: Fill inputs, select options, click buttons",
@@ -333,165 +794,110 @@ export class LLMClient {
       "• Content Injection: Add new elements, modify existing content",
       "",
       "═══ CODE REQUIREMENTS ═══",
-      "✓ Use modern JavaScript (ES6+)",
       "✓ Return a value (data extraction) or indicate success (true/false)",
       "✓ Handle errors gracefully with try-catch",
-      "✓ Use specific selectors (IDs, classes, data attributes)",
+      "✓ Use specific selectors (IDs, classes, data attributes) taken from the page structure or screenshot",
       "✓ Add null checks before accessing properties",
-      "✓ Include brief comments for complex logic",
       "✗ Do NOT use require(), import, or Node.js APIs",
       "✗ Do NOT use external libraries (jQuery, etc.) unless already on page",
       "✗ Do NOT make dangerous modifications without user request",
       "",
-      "═══ DOM SELECTION PATTERNS ═══",
-      "// By ID (most specific)",
-      "document.getElementById('username')",
-      "document.querySelector('#username')",
-      "",
-      "// By class",
-      "document.querySelector('.login-button')",
-      "document.querySelectorAll('.product-card')",
-      "",
-      "// By attribute",
-      "document.querySelector('[name=\"email\"]')",
-      "document.querySelector('[data-testid=\"submit\"]')",
-      "",
-      "// By text content (use XPath or filter)",
-      "Array.from(document.querySelectorAll('button'))",
-      "  .find(btn => btn.textContent.includes('Submit'))",
-      "",
-      "═══ COMMON PATTERNS ═══",
-      "",
-      "**1. FORM FILLING**",
-      "```javascript",
-      "// Fill text input",
-      "const input = document.querySelector('#email');",
-      "if (input) {",
-      "  input.value = 'user@example.com';",
-      "  input.dispatchEvent(new Event('input', { bubbles: true }));",
-      "}",
-      "",
-      "// Select dropdown option",
-      "const select = document.querySelector('select[name=\"country\"]');",
-      "if (select) {",
-      "  select.value = 'US';",
-      "  select.dispatchEvent(new Event('change', { bubbles: true }));",
-      "}",
-      "",
-      "// Check checkbox",
-      "const checkbox = document.querySelector('#agree');",
-      "if (checkbox && !checkbox.checked) {",
-      "  checkbox.click();",
-      "}",
-      "```",
-      "",
-      "**2. DATA EXTRACTION**",
-      "```javascript",
-      "// Extract table data",
-      "const rows = Array.from(document.querySelectorAll('table tr'));",
-      "const data = rows.map(row => {",
-      "  const cells = row.querySelectorAll('td');",
-      "  return Array.from(cells).map(cell => cell.textContent.trim());",
-      "});",
-      "return data;",
-      "",
-      "// Extract product information",
-      "const products = Array.from(document.querySelectorAll('.product')).map(el => ({",
-      "  name: el.querySelector('.title')?.textContent?.trim(),",
-      "  price: el.querySelector('.price')?.textContent?.trim(),",
-      "  image: el.querySelector('img')?.src",
-      "}));",
-      "return products;",
-      "```",
-      "",
-      "**3. STYLE MODIFICATION**",
-      "```javascript",
-      "// Change colors (dark mode)",
-      "document.body.style.backgroundColor = '#1a1a1a';",
-      "document.body.style.color = '#ffffff';",
-      "",
-      "// Hide ads/distractions",
-      "document.querySelectorAll('.ad, .sidebar, .popup').forEach(el => {",
-      "  el.style.display = 'none';",
-      "});",
-      "",
-      "// Highlight elements",
-      "document.querySelectorAll('p').forEach(p => {",
-      "  p.style.backgroundColor = 'yellow';",
-      "  p.style.padding = '4px';",
-      "});",
-      "```",
-      "",
-      "**4. CONTENT MANIPULATION**",
-      "```javascript",
-      "// Replace text content",
-      "document.querySelectorAll('h1').forEach(h1 => {",
-      "  h1.textContent = h1.textContent.toUpperCase();",
-      "});",
-      "",
-      "// Add new element",
-      "const banner = document.createElement('div');",
-      "banner.textContent = 'Important Notice';",
-      "banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:10px;text-align:center;z-index:9999';",
-      "document.body.prepend(banner);",
-      "```",
-      "",
       "═══ AVAILABLE CONTEXT ═══",
     ];
-
+    /*
+    if (url) {
+      parts.push(`\nCurrent page URL: ${url}`);
+    }
+    
+    */
     // Add DOM structure insights if available
     if (domStructure) {
-      parts.push(`\n🏗️  Page Structure:${domStructure}`);
+      parts.push(`\n Page Structure: ${domStructure}`);
     }
-
+    /* 
     if (pageText) {
       const truncatedText = this.truncateText(pageText, MAX_CONTEXT_LENGTH);
-      parts.push(`\n📄 Page Content (text):\n${truncatedText}`);
+      parts.push(`\n Page Content (text):\n${truncatedText}`);
       
       // Analyze page content for hints
       if (pageText.toLowerCase().includes('login') || pageText.toLowerCase().includes('sign in')) {
-        parts.push("\n💡 Detected: Login/Sign-in form likely present");
+        parts.push("\n Detected: Login/Sign-in form likely present");
       }
       if (pageText.toLowerCase().includes('search')) {
-        parts.push("💡 Detected: Search functionality available");
+        parts.push(" Detected: Search functionality available");
       }
     }
-
+    */
+    
     parts.push(
       "",
       "═══ RESPONSE FORMAT ═══",
       "1. **Brief Explanation** (1-2 sentences) - What the code does",
-      "2. **JavaScript Code Block** - Complete, executable code:",
+      "2. **JavaScript Code Block** - Complete, executable code, using DOM structure references to access elements:",
       "   ```javascript",
       "   // Your code here",
       "   ```",
       "3. **Notes** (optional) - Warnings, limitations, or alternatives",
       "",
-      "═══ BEST PRACTICES ═══",
-      "• Start with the most specific selector possible",
-      "• Always check if elements exist before accessing them",
-      "• Use optional chaining (?.) for safer property access",
-      "• Dispatch events after modifying form inputs (for React/Vue apps)",
-      "• Return meaningful data for extraction tasks",
-      "• Return true for successful actions, false for failures",
-      "• Wrap everything in an IIFE if needed: (async () => { ... })()",
+      "═══ AVAILABLE HELPER FUNCTIONS ═══",
+      "Your scripts run in an enhanced execution context with 20+ helper functions.",
+      "These are injected automatically - use them directly without importing!",
       "",
-      "═══ AVAILABLE HELPERS ═══",
-      "Your scripts run in an enhanced execution context with helper functions:",
+      "**DEBUGGING**",
+      "  log(...args) - Tagged console logging",
+      "    Example: log('Found', items.length, 'items');",
       "",
-      "**log(...args)** - Log messages (tagged for debugging)",
-      "  Example: log('Processing', items.length, 'items');",
+      "**DOM SELECTION**",
+      "  safeQuery(selector) - Safe querySelector (returns null on error)",
+      "    Example: const btn = safeQuery('#submit-button');",
       "",
-      "**safeQuery(selector)** - Safe querySelector (won't throw, returns null)",
-      "  Example: const btn = safeQuery('#submit-button');",
+      "  safeQueryAll(selector) - Safe querySelectorAll (returns [] on error)",
+      "    Example: const items = safeQueryAll('.product-item');",
       "",
-      "**safeQueryAll(selector)** - Safe querySelectorAll (won't throw, returns [])",
-      "  Example: const items = safeQueryAll('.product-item');",
+      "  waitFor(selector, timeout=10000) - Wait for element to appear",
+      "    Example: const modal = await waitFor('.modal', 5000);",
       "",
-      "These helpers are automatically available in your script execution context.",
-      "Use them for safer DOM access and easier debugging!",
+      "  isVisible(element) - Check if element is visible (not hidden, opacity, display)",
+      "    Example: if (isVisible(popup)) { popup.remove(); }",
       "",
-      "Now, generate clean, working code based on the user's request!"
+      "**FORM HELPERS**",
+      "  setInputValue(input, value) - Set input value (React/Vue compatible)",
+      "    Dispatches input/change events automatically",
+      "    Example: setInputValue(emailInput, 'user@example.com');",
+      "",
+      "  fillForm(data, formSelector?) - Fill multiple form fields at once",
+      "    Returns count of filled fields. Handles inputs, checkboxes, radios, selects",
+      "    Example: fillForm({ name: 'John', email: 'john@example.com', agree: true });",
+      "    Example: fillForm({ country: 'US' }, '#checkout-form');",
+      "",
+      "**DATA EXTRACTION**",
+      "  extractTable(selector) - Extract all table data as 2D array",
+      "    Example: const data = extractTable('table.results');",
+      "    Returns: [['Header1', 'Header2'], ['Row1Col1', 'Row1Col2'], ...]",
+      "",
+      "  extractLinks(containerSelector?) - Extract all links from container",
+      "    Example: const links = extractLinks('.article');",
+      "    Returns: [{ text: 'Click here', href: 'https://...' }, ...]",
+      "",
+      "**INTERACTION**",
+      "  click(selector) - Click element by selector or element reference",
+      "    Returns true if clicked, false if not found",
+      "    Example: click('.accept-cookies');",
+      "    Example: click(button);",
+      "",
+      "**STYLING**",
+      "  hide(selector) - Hide elements (sets display: none)",
+      "    Returns count of hidden elements",
+      "    Example: hide('.advertisement, .popup');",
+      "",
+      "  show(selector, display='block') - Show elements",
+      "    Returns count of shown elements",
+      "    Example: show('.hidden-content', 'flex');",
+      "",
+      "  setStyles(selector, styles) - Apply multiple CSS properties",
+      "    Example: setStyles('.highlight', { backgroundColor: 'yellow', padding: '4px' });",
+      "    Example: setStyles(element, { fontSize: '18px', color: '#333' });",
+      ""
     );
 
     return parts.join("\n");
@@ -504,7 +910,8 @@ export class LLMClient {
 
   private async streamResponse(
     messages: CoreMessage[],
-    messageId: string
+    messageId: string,
+    request: ChatRequest
   ): Promise<void> {
     if (!this.model) {
       throw new Error("Model not initialized");
@@ -519,7 +926,7 @@ export class LLMClient {
         abortSignal: undefined, // Could add abort controller for cancellation
       });
 
-      await this.processStream(result.textStream, messageId);
+      await this.processStream(result.textStream, messageId, request);
     } catch (error) {
       throw error; // Re-throw to be handled by the caller
     }
@@ -527,7 +934,8 @@ export class LLMClient {
 
   private async processStream(
     textStream: AsyncIterable<string>,
-    messageId: string
+    messageId: string,
+    request: ChatRequest
   ): Promise<void> {
     let accumulatedText = "";
 
@@ -569,6 +977,48 @@ export class LLMClient {
       content: accumulatedText,
       isComplete: true,
     });
+
+    // Auto-extract and create script if in agent mode
+    if (request.mode === 'agent') {
+      await this.handleAgentResponse(accumulatedText, request.message);
+    }
+  }
+
+  /**
+   * Handle agent mode responses by auto-extracting and creating scripts
+   */
+  private async handleAgentResponse(
+    response: string,
+    userMessage: string
+  ): Promise<void> {
+    if (!this.window) {
+      console.warn('Cannot handle agent response: window not set');
+      return;
+    }
+
+    const sidebar = this.window.sidebar;
+    if (!sidebar?.scripts) {
+      console.warn('Cannot handle agent response: sidebar or scripts not available');
+      return;
+    }
+
+    const scriptManager = sidebar.scripts;
+
+    try {
+      // Auto-extract JavaScript code from the LLM response
+      const script = scriptManager.autoExtractAndAddScript(
+        response,
+        `Agent task: ${userMessage.substring(0, 100)}${userMessage.length > 100 ? '...' : ''}`
+      );
+
+      if (script) {
+        console.log(`✅ Auto-extracted script: ${script.id}`);
+      } else {
+        console.log('No JavaScript code blocks found in agent response');
+      }
+    } catch (error) {
+      console.error('Failed to auto-extract script from agent response:', error);
+    }
   }
 
   private handleStreamError(error: unknown, messageId: string): void {

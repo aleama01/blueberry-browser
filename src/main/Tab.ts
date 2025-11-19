@@ -171,12 +171,16 @@ export class Tab {
   const __executionId = ${executionId};
   const __startTime = Date.now();
   
-  // Helper function to log from script
+  // ═══════════════════════════════════════════════════════════
+  // HELPER FUNCTIONS - Available to all injected scripts
+  // ═══════════════════════════════════════════════════════════
+  
+  // Logging helper
   const log = (...args) => {
     console.log('[INJECTED_SCRIPT]', '[' + __executionId + ']', ...args);
   };
   
-  // Helper function to safely get elements
+  // Safe query helpers
   const safeQuery = (selector) => {
     try {
       return document.querySelector(selector);
@@ -188,15 +192,175 @@ export class Tab {
   
   const safeQueryAll = (selector) => {
     try {
-      return document.querySelectorAll(selector);
+      return Array.from(document.querySelectorAll(selector));
     } catch (e) {
       log('QueryAll failed:', selector, e.message);
       return [];
     }
   };
   
+  // Wait for element helper
+  const waitFor = (selector, timeout = 10000) => {
+    return new Promise((resolve) => {
+      const element = document.querySelector(selector);
+      if (element) {
+        resolve(element);
+        return;
+      }
+      
+      const observer = new MutationObserver(() => {
+        const element = document.querySelector(selector);
+        if (element) {
+          observer.disconnect();
+          resolve(element);
+        }
+      });
+      
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
+      
+      setTimeout(() => {
+        observer.disconnect();
+        resolve(null);
+      }, timeout);
+    });
+  };
+  
+  // Check element visibility
+  const isVisible = (element) => {
+    if (!element || !(element instanceof HTMLElement)) return false;
+    const style = window.getComputedStyle(element);
+    return (
+      style.display !== 'none' &&
+      style.visibility !== 'hidden' &&
+      style.opacity !== '0' &&
+      element.offsetParent !== null
+    );
+  };
+  
+  // Set input value (React/Vue compatible)
+  const setInputValue = (input, value) => {
+    if (!input) return false;
+    
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )?.set;
+    
+    if (nativeInputValueSetter) {
+      nativeInputValueSetter.call(input, value);
+    } else {
+      input.value = value;
+    }
+    
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  };
+  
+  // Fill form helper
+  const fillForm = (data, formSelector) => {
+    let filled = 0;
+    const form = formSelector ? document.querySelector(formSelector) : document;
+    if (!form) return 0;
+    
+    for (const [name, value] of Object.entries(data)) {
+      let input = form.querySelector(\`[name="\${name}"]\`);
+      if (!input) input = form.querySelector(\`#\${name}\`);
+      if (!input) continue;
+      
+      try {
+        if (input.type === 'checkbox') {
+          if (input.checked !== Boolean(value)) {
+            input.click();
+          }
+          filled++;
+        } else if (input.type === 'radio') {
+          if (input.value === value && !input.checked) {
+            input.click();
+            filled++;
+          }
+        } else if (input.tagName === 'SELECT') {
+          input.value = String(value);
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          filled++;
+        } else {
+          setInputValue(input, String(value));
+          filled++;
+        }
+      } catch (e) {
+        log('Failed to fill field:', name, e.message);
+      }
+    }
+    
+    return filled;
+  };
+  
+  // Extract table data
+  const extractTable = (selector) => {
+    const table = document.querySelector(selector);
+    if (!table) return [];
+    
+    const rows = Array.from(table.querySelectorAll('tr'));
+    return rows.map(row => {
+      const cells = Array.from(row.querySelectorAll('td, th'));
+      return cells.map(cell => cell.textContent?.trim() || '');
+    });
+  };
+  
+  // Extract links
+  const extractLinks = (containerSelector) => {
+    const container = containerSelector ? document.querySelector(containerSelector) : document;
+    if (!container) return [];
+    
+    const links = Array.from(container.querySelectorAll('a'));
+    return links.map(link => ({
+      text: link.textContent?.trim() || '',
+      href: link.href,
+    }));
+  };
+  
+  // Click element helper
+  const click = (selector) => {
+    const element = typeof selector === 'string' ? document.querySelector(selector) : selector;
+    if (!element) return false;
+    element.click();
+    return true;
+  };
+  
+  // Hide/show helpers
+  const hide = (selector) => {
+    const elements = safeQueryAll(selector);
+    elements.forEach(el => el.style.display = 'none');
+    return elements.length;
+  };
+  
+  const show = (selector, display = 'block') => {
+    const elements = safeQueryAll(selector);
+    elements.forEach(el => el.style.display = display);
+    return elements.length;
+  };
+  
+  // Apply styles helper
+  const setStyles = (selector, styles) => {
+    const elements = typeof selector === 'string' ? safeQueryAll(selector) : [selector];
+    elements.forEach(el => {
+      if (el instanceof HTMLElement) {
+        for (const [prop, value] of Object.entries(styles)) {
+          el.style.setProperty(prop, value);
+        }
+      }
+    });
+    return elements.length;
+  };
+  
+  // ═══════════════════════════════════════════════════════════
+  // USER SCRIPT STARTS HERE
+  // ═══════════════════════════════════════════════════════════
+  
   try {
-    // USER SCRIPT STARTS HERE
     const result = await (async function() {
       ${code}
     })();
@@ -346,11 +510,11 @@ export class Tab {
   }
 
   async getTabHtml(): Promise<string> {
-    return await this.runJs("return document.documentElement.outerHTML");
+    return await this.runJs("document.documentElement");
   }
 
   async getTabText(): Promise<string> {
-    return await this.runJs("return document.documentElement.innerText");
+    return await this.runJs("document.documentElement.innerText");
   }
 
   loadURL(url: string): Promise<void> {

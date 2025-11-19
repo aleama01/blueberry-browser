@@ -39,7 +39,7 @@ const useAutoScroll = (messages: Message[]) => {
 
 // User Message Component - appears on the right
 const UserMessage: React.FC<{ content: string }> = ({ content }) => (
-  <div className="relative max-w-[85%] ml-auto animate-fade-in">
+  <div className="relative text-sm max-w-[85%] ml-auto animate-fade-in">
     <div className="bg-muted dark:bg-muted/50 rounded-3xl px-6 py-4">
       <div className="text-foreground" style={{ whiteSpace: 'pre-wrap' }}>
         {content}
@@ -123,7 +123,7 @@ const AssistantMessage: React.FC<{ content: string; isStreaming?: boolean }> = (
   content,
   isStreaming
 }) => (
-  <div className="relative w-full animate-fade-in">
+  <div className="relative w-full text-sm animate-fade-in">
     <div className="py-1">
       {isStreaming ? (
         <StreamingText content={content} />
@@ -270,8 +270,30 @@ const ConversationTurnComponent: React.FC<{
 
 // Main Chat Component
 export const Chat: React.FC = () => {
-  const { messages, isLoading, sendMessage, clearChat, chatMode, setChatMode, scripts } = useChat()
+  const { messages, isLoading, sendMessage, clearChat, chatMode, setChatMode, scripts, approveAndExecuteScript } = useChat()
   const scrollRef = useAutoScroll(messages)
+  // Handle script approval and execution
+  const handleApproveScript = async (scriptId: string) => {
+    await approveAndExecuteScript(scriptId)
+  }
+
+  // Handle script execution (for already approved scripts)
+  const handleExecuteScript = async (scriptId: string) => {
+    try {
+      await window.sidebarAPI.executeScript({ scriptId })
+    } catch (error) {
+      console.error('Failed to execute script:', error)
+    }
+  }
+
+  // Handle script deletion
+  const handleDeleteScript = async (scriptId: string) => {
+    try {
+      await window.sidebarAPI.deleteScript(scriptId)
+    } catch (error) {
+      console.error('Failed to delete script:', error)
+    }
+  }
 
   // Group messages into conversation turns
   const conversationTurns: ConversationTurn[] = []
@@ -361,7 +383,13 @@ export const Chat: React.FC = () => {
               {displayScripts.length > 0 && (
                 <div className="pt-12 space-y-4">
                   {displayScripts.map(script => (
-                    <ScriptResult key={script.id} script={script} />
+                    <ScriptResult
+                      key={script.id}
+                      script={script}
+                      onApprove={handleApproveScript}
+                      onExecute={handleExecuteScript}
+                      onDelete={handleDeleteScript}
+                    />
                   ))}
                 </div>
               )}

@@ -2,6 +2,30 @@ import { contextBridge, ipcRenderer } from "electron";
 import { electronAPI } from "@electron-toolkit/preload";
 
 /**
+ * ⚠️  IMPORTANT: This preload script is NOT currently loaded or built
+ * 
+ * This file was originally intended as a preload script for tab WebContentsViews,
+ * but is NOT included in electron.vite.config.ts build configuration.
+ * 
+ * For security reasons, the Tab class (src/main/Tab.ts) intentionally does NOT
+ * configure a preload script when creating WebContentsView instances. This keeps
+ * external websites fully sandboxed.
+ * 
+ * Instead, these utilities have been integrated directly into Tab.wrapScriptForExecution()
+ * in src/main/Tab.ts. This approach:
+ * - Maintains security by not exposing APIs to untrusted external websites
+ * - Only provides utilities to user-approved scripts
+ * - Avoids preload script complexity
+ * 
+ * 📚 This file serves as REFERENCE DOCUMENTATION for available utilities.
+ * 
+ * To add new utilities:
+ * 1. Add the implementation to Tab.wrapScriptForExecution() in src/main/Tab.ts
+ * 2. Document it in LLMClient.buildAgentSystemPrompt() so the AI knows about it
+ * 3. Optionally update this file to keep the reference catalog current
+ */
+
+/**
  * DOM Utilities for safe element manipulation
  */
 const domUtils = {

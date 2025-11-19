@@ -1,5 +1,5 @@
 import React from 'react'
-import { CheckCircle2, XCircle, Clock, Code2, AlertTriangle } from 'lucide-react'
+import { CheckCircle2, XCircle, Clock, Code2, AlertTriangle, Play, Check, Trash2 } from 'lucide-react'
 import { cn } from '@common/lib/utils'
 
 interface Script {
@@ -16,6 +16,9 @@ interface Script {
 
 interface ScriptResultProps {
   script: Script
+  onApprove?: (scriptId: string) => void
+  onExecute?: (scriptId: string) => void
+  onDelete?: (scriptId: string) => void
 }
 
 // Format execution time in ms
@@ -183,12 +186,52 @@ const CodeDisplay: React.FC<{ code: string }> = ({ code }) => {
 }
 
 // Main ScriptResult Component
-export const ScriptResult: React.FC<ScriptResultProps> = ({ script }) => {
+export const ScriptResult: React.FC<ScriptResultProps> = ({
+  script,
+  onApprove,
+  onExecute,
+  onDelete
+}) => {
+  const [isProcessing, setIsProcessing] = React.useState(false)
+
+  const handleApprove = async () => {
+    if (onApprove && !isProcessing) {
+      setIsProcessing(true)
+      try {
+        await onApprove(script.id)
+      } finally {
+        setIsProcessing(false)
+      }
+    }
+  }
+
+  const handleExecute = async () => {
+    if (onExecute && !isProcessing) {
+      setIsProcessing(true)
+      try {
+        await onExecute(script.id)
+      } finally {
+        setIsProcessing(false)
+      }
+    }
+  }
+
+  const handleDelete = async () => {
+    if (onDelete && !isProcessing) {
+      setIsProcessing(true)
+      try {
+        await onDelete(script.id)
+      } finally {
+        setIsProcessing(false)
+      }
+    }
+  }
+
   return (
     <div className="w-full p-4 rounded-lg border border-border bg-background/50 dark:bg-secondary/30 animate-fade-in">
       {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 ">
           {script.description && (
             <div className="text-sm font-medium text-foreground mb-1 break-words">
               {script.description}
@@ -214,6 +257,71 @@ export const ScriptResult: React.FC<ScriptResultProps> = ({ script }) => {
           executionTime={script.executionTime}
         />
       )}
+
+      {/* Action Buttons */}
+      <div className="mt-3 flex gap-2">
+        {/* Approve & Run button for pending scripts */}
+        {script.status === 'pending' && (
+          <>
+            <button
+              onClick={handleApprove}
+              disabled={isProcessing}
+              className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-600/50 text-white rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2"
+            >
+              <Check className="size-4" />
+              {isProcessing ? 'Approving...' : 'Approve & Run'}
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={isProcessing}
+              className="px-4 py-2 bg-red-600/10 hover:bg-red-600/20 disabled:bg-red-600/5 text-red-600 dark:text-red-500 rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2"
+            >
+              <Trash2 className="size-4" />
+            </button>
+          </>
+        )}
+
+        {/* Run button for approved scripts */}
+        {script.status === 'approved' && (
+          <>
+            <button
+              onClick={handleExecute}
+              disabled={isProcessing}
+              className="flex-1 px-4 py-2 bg-primary hover:bg-primary/90 disabled:bg-primary/50 text-primary-foreground rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2"
+            >
+              <Play className="size-4" />
+              {isProcessing ? 'Running...' : 'Run Script'}
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={isProcessing}
+              className="px-4 py-2 bg-muted hover:bg-muted/80 disabled:bg-muted/50 text-foreground rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2"
+            >
+              <Trash2 className="size-4" />
+            </button>
+          </>
+        )}
+
+        {/* Delete button for completed/failed scripts */}
+        {(script.status === 'completed' || script.status === 'failed') && (
+          <button
+            onClick={handleDelete}
+            disabled={isProcessing}
+            className="px-4 py-2 bg-muted hover:bg-muted/80 disabled:bg-muted/50 text-foreground rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2"
+          >
+            <Trash2 className="size-4" />
+            Delete
+          </button>
+        )}
+
+        {/* Running state - no buttons */}
+        {script.status === 'running' && (
+          <div className="flex-1 px-4 py-2 bg-blue-600/10 text-blue-600 dark:text-blue-500 rounded-lg font-medium text-sm flex items-center justify-center gap-2">
+            <Clock className="size-4 animate-pulse" />
+            Executing...
+          </div>
+        )}
+      </div>
 
       {/* Pending Approval Message */}
       {script.status === 'pending' && (

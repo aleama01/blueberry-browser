@@ -1,6 +1,18 @@
 import { ElectronAPI } from "@electron-toolkit/preload";
 
 /**
+ * ⚠️  IMPORTANT: These types are for REFERENCE ONLY
+ * 
+ * This type definition file corresponds to tab.ts, which is NOT currently
+ * loaded as a preload script (not in electron.vite.config.ts).
+ * 
+ * The utilities described here are injected directly into approved scripts
+ * via Tab.wrapScriptForExecution() in src/main/Tab.ts, not via window.tabAPI.
+ * 
+ * This file serves as reference documentation for the available utility functions.
+ */
+
+/**
  * DOM Utilities Interface
  */
 interface DOMUtils {

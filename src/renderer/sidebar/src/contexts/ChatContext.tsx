@@ -209,14 +209,28 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       })
     }
 
+    // Listen for script deletions
+    const handleScriptDeleted = (data: { scriptId: string }) => {
+      setScripts(prevScripts => prevScripts.filter(s => s.id !== data.scriptId))
+    }
+
+    // Listen for all scripts cleared
+    const handleScriptsCleared = () => {
+      setScripts([])
+    }
+
     window.sidebarAPI.onChatResponse(handleChatResponse)
     window.sidebarAPI.onMessagesUpdated(handleMessagesUpdated)
     window.sidebarAPI.onScriptUpdated(handleScriptUpdated)
+    window.sidebarAPI.onScriptDeleted(handleScriptDeleted)
+    window.sidebarAPI.onScriptsCleared(handleScriptsCleared)
 
     return () => {
       window.sidebarAPI.removeChatResponseListener()
       window.sidebarAPI.removeMessagesUpdatedListener()
       window.sidebarAPI.removeScriptUpdateListener()
+      window.sidebarAPI.removeScriptDeleteListener()
+      window.sidebarAPI.removeScriptsClearedListener()
     }
   }, [])
 
